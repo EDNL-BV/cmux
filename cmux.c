@@ -324,6 +324,9 @@ int to_line_speed(int speed) {
 		case 38400: return B38400;
 		case 57600: return B57600;
 		case 115200: return B115200;
+		case 460800: return B460800;
+		case 3000000: return B3000000;
+		case 4000000: return B4000000;
 		default:
 			errx(EXIT_FAILURE, "Invalid value for speed: %d", speed);
 	}
@@ -444,42 +447,42 @@ int main(int argc, char **argv) {
 	*/
 
 	if (match(g_type, "sim900")) {
-		if (send_at_command(serial_fd, "AAAT\r") == -1)
+		if (send_at_command(serial_fd, "AAAT\r\n") == -1)
 			errx(EXIT_FAILURE, "AAAAT: bad response");
 	}
 
 	if (match(g_type, "telit")) {
-		if (send_at_command(serial_fd, "AT#SELINT=2\r") == -1)
+		if (send_at_command(serial_fd, "AT#SELINT=2\r\n") == -1)
 			errx(EXIT_FAILURE, "AT#SELINT=2: bad response");
 
-		if (send_at_command(serial_fd, "ATE0V1&K3&D2\r") == -1)
+		if (send_at_command(serial_fd, "ATE0V1&K3&D2\r\n") == -1)
 			errx(EXIT_FAILURE, "ATE0V1&K3&D2: bad response");
 
-		sprintf(atcommand, "AT+IPR=%d\r", g_speed);
+		sprintf(atcommand, "AT+IPR=%d\r\n", g_speed);
 		if (send_at_command(serial_fd, atcommand) == -1)
 			errx(EXIT_FAILURE, "AT+IPR=%d: bad response", g_speed);
 
-		if (send_at_command(serial_fd, "AT#CMUXMODE=0\r") == -1)
+		if (send_at_command(serial_fd, "AT#CMUXMODE=0\r\n") == -1)
 			errx(EXIT_FAILURE, "AT#CMUXMODE=0: bad response");
 
-		(void)send_at_command(serial_fd, "AT+CMUX=0\r");
+		(void)send_at_command(serial_fd, "AT+CMUX=0\r\n");
 	} else {
-		if (send_at_command(serial_fd, "AT+IFC=2,2\r") == -1)
+		if (send_at_command(serial_fd, "AT+IFC=2,2\r\n") == -1)
 			errx(EXIT_FAILURE, "AT+IFC=2,2: bad response");
 
-		if (send_at_command(serial_fd, "AT+GMM\r") == -1)
+		if (send_at_command(serial_fd, "AT+GMM\r\n") == -1)
 			warnx("AT+GMM: bad response");
 
-		if (send_at_command(serial_fd, "AT\r") == -1)
+		if (send_at_command(serial_fd, "AT\r\n") == -1)
 			warnx("AT: bad response");
 
 		if (!match(g_type, "sim900")) {
-			sprintf(atcommand, "AT+IPR=%d&w\r", g_speed);
+			sprintf(atcommand, "AT+IPR=%d;&w\r\n", g_speed);
 			if (send_at_command(serial_fd, atcommand) == -1)
-				errx(EXIT_FAILURE, "AT+IPR=%d&w: bad response", g_speed);
+				errx(EXIT_FAILURE, "AT+IPR=%d;&w: bad response", g_speed);
 		}
 
-		sprintf(atcommand, "AT+CMUX=0,0,5,%d,10,3,30,10,2\r", g_mtu);
+		sprintf(atcommand, "AT+CMUX=0,0,7,%d,10,3,30,10,2\r\n", g_mtu);
 		if (send_at_command(serial_fd, atcommand) == -1)
 			errx(EXIT_FAILURE, "Cannot enable modem CMUX");
 	}
