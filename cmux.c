@@ -53,7 +53,11 @@
 #endif
 
  /* size of the reception buffer which gets data from the serial line */
-#define SIZE_BUF	256
+#define SIZE_BUF	1024
+
+/** The default baudrate of the modem
+ */
+#define DEFAULT_BAUDRATE	115200
 
 char *g_type = "default";
 
@@ -85,6 +89,7 @@ char *g_device = "/dev/ttyUSB0";
 
 /* line speed */
 int g_speed = 115200;
+int g_altspeed = 115200;
 
 /* maximum transfer unit (MTU), value in bytes */
 int g_mtu = 512;
@@ -126,7 +131,7 @@ int send_at_command(int serial_fd, char *command) {
 	memset(buf, 0, sizeof(buf));
 	r = read(serial_fd, buf, sizeof(buf));
 	if (r == -1)
-		err(EXIT_FAILURE, "Cannot read %s", g_device);
+		return -1;
 
 	/* if there is no result from the modem, return failure */
 	if (r == 0) {
@@ -303,6 +308,7 @@ void print_help() {
 		"--type <type>	SIM900, TELIT or default. (Default: %s)\n"
 		"--device <name>	Serial device name. (Default: %s)\n"
 		"--speed <rate>	Serial device line speed. (Default: %d)\n"
+		"--alt-speed <rate>	Alternative serial device line speed. (Default: %d)\n"
 		"--mtu <number>	MTU size. (Default: %d)\n"
 		"--debug [1|0]	Enable debugging. (Default: %d)\n"
 		"--daemon [1|0]	Fork into background. (Default: %d)\n"
@@ -310,23 +316,36 @@ void print_help() {
 		"--base <name>	Base name for the nodes. (Default: %s)\n"
 		"--nodes [0-4]	Number of nodes to create. (Default: %d)\n"
 		"\n",
-		g_type, g_device, g_speed, g_mtu, g_debug,
+		g_type, g_device, g_speed, g_altspeed, g_mtu, g_debug,
 		g_daemon, g_driver, g_base, g_nodes
 	);
 }
 
 int to_line_speed(int speed) {
 	switch(speed) {
-		case 2400: return B2400;
-		case 4800: return B4800;
 		case 9600: return B9600;
 		case 19200: return B19200;
 		case 38400: return B38400;
 		case 57600: return B57600;
 		case 115200: return B115200;
+		case 230400: return B230400;
 		case 460800: return B460800;
-		case 3000000: return B3000000;
-		case 4000000: return B4000000;
+		case 921600: return B921600;
+		default:
+			errx(EXIT_FAILURE, "Invalid value for speed: %d", speed);
+	}
+}
+
+int to_cmux_speed(int speed) {
+	switch(speed) {
+		case 9600: return 1;
+		case 19200: return 2;
+		case 38400: return 3;
+		case 57600: return 4;
+		case 115200: return 5;
+		case 230400: return 6;
+		case 460800: return 7;
+		case 921600: return 8;
 		default:
 			errx(EXIT_FAILURE, "Invalid value for speed: %d", speed);
 	}
@@ -348,11 +367,11 @@ char *to_lower(const char *str) {
 }
 
 int main(int argc, char **argv) {
-	int serial_fd, major, speed, i;
+	int serial_fd, major, speed, altspeed, cmux_speed, i, using_altspeed = 0;
 	struct termios tio;
 	int ldisc = N_GSM0710;
 	struct gsm_config gsm;
-	char atcommand[40];
+	char atcommand[128];
 
 	for (i = 1; i < argc; ++i) {
 		char **args = &argv[i];
@@ -365,6 +384,7 @@ int main(int argc, char **argv) {
 		if (handle_string_arg(args, &g_type, "--type")
 			|| handle_string_arg(args, &g_device, "--device")
 			|| handle_number_arg(args, &g_speed, "--speed")
+			|| handle_number_arg(args, &g_altspeed, "--alt-speed")
 			|| handle_number_arg(args, &g_mtu, "--mtu")
 			|| handle_number_arg(args, &g_debug, "--debug")
 			|| handle_number_arg(args, &g_daemon, "--daemon")
@@ -378,6 +398,8 @@ int main(int argc, char **argv) {
 	};
 
 	speed = to_line_speed(g_speed);
+	altspeed = to_line_speed(g_altspeed);
+	cmux_speed = to_cmux_speed(g_speed);
 	g_type = to_lower(g_type);
 
 	if (strcmp(g_type, "default") && strcmp(g_type, "sim900") && strcmp(g_type, "telit"))
@@ -394,8 +416,6 @@ int main(int argc, char **argv) {
 
 	if (match(g_type, "sim900")) {
 		g_mtu = 255;
-	} else {
-		g_mtu = 512;
 	}
 
 	/* print global parameters */
@@ -403,13 +423,14 @@ int main(int argc, char **argv) {
 		"type: %s\n"
 		"device: %s\n"
 		"speed: %d\n"
+		"alt_speed: %d\n"
 		"mtu: %d\n"
 		"debug: %d\n"
 		"daemon: %d\n"
 		"driver: %s\n"
 		"base: %s\n"
 		"nodes: %d\n",
-		g_type, g_device, g_speed, g_mtu, g_debug,
+		g_type, g_device, g_speed, g_altspeed, g_mtu, g_debug,
 		g_daemon, g_driver, g_nodes ? g_base : "disabled", g_nodes
 	);
 
@@ -438,6 +459,39 @@ int main(int argc, char **argv) {
 	/* write the attributes */
 	if (tcsetattr(serial_fd, TCSANOW, &tio) == -1)
 		err(EXIT_FAILURE, "Cannot set line attributes");
+
+	/* try two times to communicate with the modem, first with speed then with altspeed */
+	for (int idx = 0; idx < 2; ++idx)
+	{
+		dbg("Testing modem communication");
+
+		if (send_at_command(serial_fd, "AT\r\n") == -1
+			&& send_at_command(serial_fd, "AT\r\n") == -1
+			&& send_at_command(serial_fd, "AT\r\n") == -1
+			&& send_at_command(serial_fd, "AT\r\n") == -1)
+		{
+			if (using_altspeed)
+			{
+				err(EXIT_FAILURE, "Cannot communicate with modem");
+			}
+			else
+			{
+				dbg("Switching to alternative line speed");
+				sleep(1);
+
+				if (cfsetospeed(&tio, altspeed) < 0 || cfsetispeed(&tio, altspeed) < 0)
+					err(EXIT_FAILURE, "Cannot set alternative line speed");
+
+				using_altspeed = 1;
+
+				/* re-write the attributes */
+				if (tcsetattr(serial_fd, TCSANOW, &tio) == -1)
+					err(EXIT_FAILURE, "Cannot set alternative line attributes");
+			}
+		}
+		else
+			break;
+	}
 
 	/**
 	*	Send AT commands to put the modem in CMUX mode.
@@ -482,7 +536,17 @@ int main(int argc, char **argv) {
 				errx(EXIT_FAILURE, "AT+IPR=%d;&w: bad response", g_speed);
 		}
 
-		sprintf(atcommand, "AT+CMUX=0,0,7,%d,10,3,30,10,2\r\n", g_mtu);
+		if (using_altspeed)
+		{
+			if (cfsetospeed(&tio, speed) < 0 || cfsetispeed(&tio, speed) < 0)
+				err(EXIT_FAILURE, "Cannot set final line speed");
+
+			/* re-write the attributes */
+			if (tcsetattr(serial_fd, TCSANOW, &tio) == -1)
+				err(EXIT_FAILURE, "Cannot set final line attributes");
+		}
+
+		sprintf(atcommand, "AT+CMUX=0,0,%d,%d,10,3,30,10,2\r\n", cmux_speed, g_mtu);
 		if (send_at_command(serial_fd, atcommand) == -1)
 			errx(EXIT_FAILURE, "Cannot enable modem CMUX");
 	}
