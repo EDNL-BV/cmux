@@ -372,6 +372,7 @@ int main(int argc, char **argv) {
 	int ldisc = N_GSM0710;
 	struct gsm_config gsm;
 	char atcommand[128];
+	int idx;
 
 	for (i = 1; i < argc; ++i) {
 		char **args = &argv[i];
@@ -461,7 +462,7 @@ int main(int argc, char **argv) {
 		err(EXIT_FAILURE, "Cannot set line attributes");
 
 	/* try two times to communicate with the modem, first with speed then with altspeed */
-	for (int idx = 0; idx < 2; ++idx)
+	for (idx = 0; idx < 2; ++idx)
 	{
 		dbg("Testing modem communication");
 
